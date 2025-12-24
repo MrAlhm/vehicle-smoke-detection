@@ -3,3 +3,6 @@ numpy
 pillow
 pandas
 fpdf
+opencv-python-headless
+torch
+ultralytics
