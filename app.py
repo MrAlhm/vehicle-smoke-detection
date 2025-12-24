@@ -7,7 +7,7 @@ import easyocr
 from ultralytics import YOLO
 
 # -------------------------------------------------
-# Initialize Models (loaded once)
+# Initialize Models
 # -------------------------------------------------
 reader = easyocr.Reader(['en'], gpu=False)
 yolo_model = YOLO("yolov8n.pt")   # YOLOv8 Nano (CPU friendly)
@@ -33,33 +33,53 @@ def detect_smoke(image_bgr):
         severity = "Low"
 
     confidence = int(min(100, smoke_score * 200))
-
     return smoke_score, status, severity, confidence
 
 # -------------------------------------------------
-# YOLO-based Number Plate Detection + OCR
+# YOLO Number Plate Detection + Bounding Box + OCR
 # -------------------------------------------------
-def detect_number_plate_yolo(image_bgr):
+def detect_plate_with_bbox(image_bgr):
     results = yolo_model(image_bgr, conf=0.4)
 
     plate_img = None
+    bbox = None
 
     for r in results:
         if r.boxes is not None:
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 plate_img = image_bgr[y1:y2, x1:x2]
+                bbox = (x1, y1, x2, y2)
                 break
 
     if plate_img is None or plate_img.size == 0:
-        return "Not Readable"
+        return "Not Readable", image_bgr, None
 
+    # OCR
     ocr_result = reader.readtext(plate_img)
+    plate_text = ocr_result[0][1] if len(ocr_result) > 0 else "Not Readable"
 
-    if len(ocr_result) == 0:
-        return "Not Readable"
+    # Draw bounding box
+    image_with_box = image_bgr.copy()
+    if bbox:
+        cv2.rectangle(
+            image_with_box,
+            (bbox[0], bbox[1]),
+            (bbox[2], bbox[3]),
+            (0, 255, 0),
+            2
+        )
+        cv2.putText(
+            image_with_box,
+            "Number Plate",
+            (bbox[0], bbox[1] - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2
+        )
 
-    return ocr_result[0][1]
+    return plate_text, image_with_box, plate_img
 
 # -------------------------------------------------
 # Streamlit UI
@@ -81,14 +101,14 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
-    st.image(image, caption="Captured Vehicle Frame", use_column_width=True)
-
     image_np = np.array(image)
     image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
+    st.image(image, caption="Original Image", use_column_width=True)
+
     smoke_score, smoke_status, severity, confidence = detect_smoke(image_bgr)
 
-    st.subheader("📊 Detection Result")
+    st.subheader("📊 Smoke Analysis")
     st.metric("Smoke Score", f"{smoke_score:.2f}")
     st.metric("Smoke Severity", severity)
     st.metric("Detection Confidence", f"{confidence}%")
@@ -96,9 +116,24 @@ if uploaded_file is not None:
     if smoke_status != "Normal Emission":
         st.error("🚨 Polluting Vehicle Detected")
 
-        plate_number = detect_number_plate_yolo(image_bgr)
-        st.subheader("🚘 Vehicle Identification")
-        st.info(f"Detected Number Plate: {plate_number}")
+        plate_text, boxed_image, plate_crop = detect_plate_with_bbox(image_bgr)
+
+        st.subheader("🚘 Number Plate Detection")
+
+        st.image(
+            cv2.cvtColor(boxed_image, cv2.COLOR_BGR2RGB),
+            caption="Detected Number Plate (Bounding Box)",
+            use_column_width=True
+        )
+
+        if plate_crop is not None:
+            st.image(
+                cv2.cvtColor(plate_crop, cv2.COLOR_BGR2RGB),
+                caption="Cropped Plate Region",
+                width=300
+            )
+
+        st.info(f"Detected Number Plate: {plate_text}")
     else:
         st.success("✅ Emission Within Permissible Limit")
 
