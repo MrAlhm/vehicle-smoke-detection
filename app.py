@@ -5,205 +5,276 @@ from PIL import Image
 from datetime import datetime
 import pandas as pd
 import easyocr
-import tempfile
-import matplotlib.pyplot as plt
-from fpdf import FPDF
 
-# ================= PAGE CONFIG =================
+# =====================================================
+# PAGE CONFIG
+# =====================================================
 st.set_page_config(
-    page_title="Smart City Vehicle Smoke Monitoring",
+    page_title="Traffic Police Smoke Monitoring System",
     layout="wide",
-    page_icon="🚦"
+    page_icon="🚓"
 )
 
-# ================= CUSTOM CSS =================
+# =====================================================
+# CUSTOM POLICE THEME CSS
+# =====================================================
 st.markdown("""
 <style>
-body { background-color: #f5f7fb; }
-.hero {
-    padding: 25px;
-    border-radius: 20px;
-    background: linear-gradient(90deg,#1e3c72,#2a5298);
+body {
+    background-color: #0b132b;
+}
+.main {
+    background-color: #0b132b;
+}
+.sidebar .sidebar-content {
+    background-color: #1c2541;
+}
+h1, h2, h3, h4 {
+    color: #ffffff;
+}
+.metric-label {
+    color: #ffffff !important;
+}
+.metric-value {
+    color: #fca311 !important;
+}
+.alert-box {
+    background: linear-gradient(90deg, #9b2226, #ae2012);
+    padding: 15px;
+    border-radius: 10px;
     color: white;
+    font-size: 18px;
+}
+.success-box {
+    background: linear-gradient(90deg, #2a9d8f, #40916c);
+    padding: 15px;
+    border-radius: 10px;
+    color: white;
+    font-size: 18px;
 }
 .card {
+    background-color: #1c2541;
     padding: 20px;
-    border-radius: 16px;
-    background-color: white;
-    box-shadow: 0px 4px 12px rgba(0,0,0,0.1);
-    text-align: center;
+    border-radius: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.4);
 }
-.badge-red { background:#e74c3c;color:white;padding:10px 20px;border-radius:20px; }
-.badge-green { background:#2ecc71;color:white;padding:10px 20px;border-radius:20px; }
-.badge-yellow { background:#f1c40f;color:black;padding:10px 20px;border-radius:20px; }
+.footer {
+    text-align:center;
+    color:#adb5bd;
+    margin-top:40px;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ================= HERO =================
+# =====================================================
+# SESSION STATE
+# =====================================================
+if "image" not in st.session_state:
+    st.session_state.image = None
+
+if "records" not in st.session_state:
+    st.session_state.records = []
+
+# =====================================================
+# SIDEBAR (POLICE CONSOLE)
+# =====================================================
+st.sidebar.markdown("## 🚓 Traffic Police Console")
+
+page = st.sidebar.radio(
+    "Navigation",
+    ["🚨 Detection", "📹 CCTV", "🧾 e-Challan", "📊 Dashboard", "🔥 Hotspots", "ℹ About"]
+)
+
+camera_location = st.sidebar.selectbox(
+    "📍 Camera Location",
+    [
+        "Delhi – Connaught Place",
+        "Delhi – Anand Vihar",
+        "Mumbai – Andheri East",
+        "Mumbai – Bandra West",
+        "Bengaluru – Silk Board",
+        "Chennai – T Nagar",
+        "Hyderabad – Hitech City",
+        "Kolkata – Salt Lake"
+    ]
+)
+
+uploaded_file = st.sidebar.file_uploader(
+    "📤 Upload CCTV Image",
+    type=["jpg", "jpeg", "png"]
+)
+
+if uploaded_file:
+    st.session_state.image = uploaded_file
+
+# =====================================================
+# MODELS
+# =====================================================
+reader = easyocr.Reader(['en'], gpu=False)
+
+# =====================================================
+# FUNCTIONS
+# =====================================================
+def detect_smoke(image):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
+    smoke_mask = (s < 60) & (v > 150)
+    score = np.sum(smoke_mask) / smoke_mask.size
+
+    if score >= 0.35:
+        severity = "HIGH"
+        status = "POLLUTING"
+    elif score >= 0.20:
+        severity = "MEDIUM"
+        status = "SUSPICIOUS"
+    else:
+        severity = "LOW"
+        status = "NORMAL"
+
+    confidence = min(95, int(score * 200))
+    return score, severity, status, confidence
+
+
+def detect_number_plate(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
+    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    for cnt in contours[:15]:
+        approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+        if len(approx) == 4:
+            x, y, w, h = cv2.boundingRect(approx)
+            plate = image[y:y+h, x:x+w]
+            text = reader.readtext(plate)
+            if text:
+                return text[0][1], plate
+    return "Not Readable", None
+
+
+def detect_vehicle_type(image):
+    h, w, _ = image.shape
+    if w > 1100:
+        return "Truck / Bus"
+    elif w > 700:
+        return "Car"
+    else:
+        return "Two-Wheeler"
+
+# =====================================================
+# HEADER
+# =====================================================
 st.markdown("""
-<div class="hero">
-<h1>🚗 Smart City Vehicle Smoke Monitoring</h1>
-<p>AI-Powered Real-Time Pollution Detection & Enforcement System</p>
+<div class="card">
+<h1>🚓 Traffic Police Vehicle Smoke Monitoring System</h1>
+<p>AI-Powered Enforcement | Smart City Pollution Control</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ================= OCR =================
-reader = easyocr.Reader(['en'], gpu=False)
+# =====================================================
+# PAGE: DETECTION
+# =====================================================
+if page == "🚨 Detection":
 
-# ================= SESSION =================
-if "violations" not in st.session_state:
-    st.session_state.violations = []
-
-# ================= FUNCTIONS =================
-def detect_smoke(img):
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    _, s, v = cv2.split(hsv)
-    mask = (s < 60) & (v > 150)
-    score = np.sum(mask) / mask.size
-    if score >= 0.30:
-        return score, "High", "🚨 Violation"
-    elif score >= 0.20:
-        return score, "Medium", "⚠️ Warning"
+    if st.session_state.image is None:
+        st.warning("📤 Upload a CCTV image from sidebar")
     else:
-        return score, "Low", "✅ Clean"
+        img = Image.open(st.session_state.image)
+        st.image(img, caption="📸 CCTV Captured Vehicle", use_column_width=True)
 
-def detect_plate(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray,100,200)
-    cnts,_ = cv2.findContours(edges,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
-    for c in cnts:
-        approx = cv2.approxPolyDP(c,0.02*cv2.arcLength(c,True),True)
-        if len(approx)==4:
-            x,y,w,h = cv2.boundingRect(approx)
-            plate = img[y:y+h,x:x+w]
-            txt = reader.readtext(plate)
-            return txt[0][1] if txt else "Not Readable", plate
-    return "Not Readable", None
-
-def generate_pdf(data):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200,10,"E-CHALLAN – VEHICLE EMISSION VIOLATION",ln=True,align="C")
-    pdf.ln(10)
-    for k,v in data.items():
-        pdf.cell(200,10,f"{k}: {v}",ln=True)
-    path = f"/tmp/challan_{datetime.now().timestamp()}.pdf"
-    pdf.output(path)
-    return path
-
-# ================= SIDEBAR =================
-st.sidebar.title("📂 Navigation")
-section = st.sidebar.radio(
-    "Go to",
-    ["🔍 Detection","🎥 CCTV","🧾 e-Challan","📊 Dashboard","🗺 Hotspots","ℹ️ About"]
-)
-
-camera = st.sidebar.selectbox(
-    "📍 Camera Location",
-    ["Cam-Delhi-01","Cam-Delhi-02","Cam-Delhi-03"]
-)
-
-# ================= DETECTION =================
-if section == "🔍 Detection":
-    file = st.file_uploader("Upload Vehicle Image",["jpg","png","jpeg"])
-    if file:
-        img = Image.open(file)
         img_np = np.array(img)
-        img_bgr = cv2.cvtColor(img_np,cv2.COLOR_RGB2BGR)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
-        score, severity, status = detect_smoke(img_bgr)
-        plate, plate_img = detect_plate(img_bgr)
+        score, severity, status, confidence = detect_smoke(img_bgr)
 
-        c1,c2,c3 = st.columns(3)
-        c1.markdown(f"<div class='card'><h3>Smoke Score</h3><h2>{score:.2f}</h2></div>",unsafe_allow_html=True)
-        c2.markdown(f"<div class='card'><h3>Severity</h3><h2>{severity}</h2></div>",unsafe_allow_html=True)
-        if "Violation" in status:
-            c3.markdown("<div class='badge-red'>VIOLATION</div>",unsafe_allow_html=True)
-        elif "Warning" in status:
-            c3.markdown("<div class='badge-yellow'>WARNING</div>",unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Smoke Score", f"{score:.2f}")
+        col2.metric("Severity", severity)
+        col3.metric("Status", status)
+        col4.metric("Confidence", f"{confidence}%")
+
+        if status != "NORMAL":
+            st.markdown('<div class="alert-box">🚨 POLLUTING VEHICLE DETECTED</div>', unsafe_allow_html=True)
+
+            plate, plate_img = detect_number_plate(img_bgr)
+            vehicle = detect_vehicle_type(img_bgr)
+
+            if plate_img is not None:
+                st.image(plate_img, caption="🔍 Cropped Number Plate", width=300)
+
+            st.info(f"🚘 Vehicle Number: {plate}")
+            st.info(f"🚚 Vehicle Type: {vehicle}")
+            st.info(f"📍 Camera: {camera_location}")
+
+            st.session_state.records.append({
+                "Time": datetime.now(),
+                "Camera": camera_location,
+                "Plate": plate,
+                "Vehicle": vehicle,
+                "Severity": severity
+            })
         else:
-            c3.markdown("<div class='badge-green'>CLEAN</div>",unsafe_allow_html=True)
+            st.markdown('<div class="success-box">✅ EMISSION WITHIN LEGAL LIMIT</div>', unsafe_allow_html=True)
 
-        st.image(img,caption="Captured Frame",use_column_width=True)
-        st.info(f"Number Plate: {plate}")
+# =====================================================
+# PAGE: E-CHALLAN
+# =====================================================
+elif page == "🧾 e-Challan":
+    st.subheader("🧾 Auto-Generated Traffic Police e-Challan")
 
-        if "Violation" in status:
-            data = {
-                "Plate":plate,
-                "Camera":camera,
-                "Severity":severity,
-                "Time":datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            st.session_state.violations.append(data)
-            st.error("🚨 Auto e-Challan Generated")
-
-# ================= CCTV =================
-elif section == "🎥 CCTV":
-    video = st.file_uploader("Upload CCTV Video",["mp4","avi","mov"])
-    if video:
-        tfile = tempfile.NamedTemporaryFile(delete=False)
-        tfile.write(video.read())
-        cap = cv2.VideoCapture(tfile.name)
-        frames = 0
-        while cap.isOpened() and frames < 20:
-            ret, frame = cap.read()
-            if not ret: break
-            score, severity, status = detect_smoke(frame)
-            if "Violation" in status:
-                st.image(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB),
-                         caption=f"Frame {frames+1} – Smoke Detected")
-            frames += 1
-        st.success("CCTV Analysis Completed")
-
-# ================= CHALLAN =================
-elif section == "🧾 e-Challan":
-    if st.session_state.violations:
-        df = pd.DataFrame(st.session_state.violations)
-        st.dataframe(df,use_container_width=True)
-        latest = st.session_state.violations[-1]
-        pdf = generate_pdf(latest)
-        with open(pdf,"rb") as f:
-            st.download_button("⬇ Download Latest e-Challan PDF",f,"e_challan.pdf")
+    if not st.session_state.records:
+        st.warning("No violations recorded")
     else:
-        st.info("No challans yet")
+        last = st.session_state.records[-1]
+        st.json({
+            "Date & Time": last["Time"].strftime("%Y-%m-%d %H:%M:%S"),
+            "Camera": last["Camera"],
+            "Vehicle No": last["Plate"],
+            "Vehicle Type": last["Vehicle"],
+            "Offence": "Excessive Smoke Emission",
+            "Fine": "₹5000"
+        })
 
-# ================= DASHBOARD =================
-elif section == "📊 Dashboard":
-    if st.session_state.violations:
-        df = pd.DataFrame(st.session_state.violations)
+# =====================================================
+# PAGE: DASHBOARD
+# =====================================================
+elif page == "📊 Dashboard":
+    st.subheader("📊 Police Analytics Dashboard")
+
+    if st.session_state.records:
+        df = pd.DataFrame(st.session_state.records)
+        st.dataframe(df)
+        st.bar_chart(df["Severity"].value_counts())
+    else:
+        st.warning("No data yet")
+
+# =====================================================
+# PAGE: HOTSPOTS
+# =====================================================
+elif page == "🔥 Hotspots":
+    st.subheader("🔥 Pollution Hotspot Analysis")
+
+    if st.session_state.records:
+        df = pd.DataFrame(st.session_state.records)
         st.bar_chart(df["Camera"].value_counts())
-        st.line_chart(df.groupby("Camera").size())
     else:
-        st.info("No data available")
+        st.warning("No hotspot data")
 
-# ================= HOTSPOTS =================
-elif section == "🗺 Hotspots":
-    st.markdown("### 📍 Pollution Hotspots (Simulated Map)")
-    st.write("🔴 Red = High violation zones")
-    st.map(pd.DataFrame({
-        "lat":[28.61,28.62,28.63],
-        "lon":[77.20,77.21,77.22]
-    }))
-
-# ================= ABOUT =================
-else:
+# =====================================================
+# PAGE: ABOUT
+# =====================================================
+elif page == "ℹ About":
     st.markdown("""
-### 🚦 Smart City Vehicle Smoke Monitoring
-**Purpose**  
-Automated detection and enforcement of vehicular emission violations.
+    ### 🚓 About This System
+    - Designed for Indian Traffic Police
+    - AI-based real-time pollution enforcement
+    - Number plate recognition
+    - Smart city analytics
+    - Hackathon-ready prototype
+    """)
 
-**Tech Stack**
-- Computer Vision
-- EasyOCR
-- OpenCV
-- Streamlit
-- AI-based Heuristics
-
-**Impact**
-- Reduced pollution
-- Real-time enforcement
-- Data-driven policy making
-""")
-
-st.caption("© Smart City AI – Hackathon Prototype")
+# =====================================================
+# FOOTER
+# =====================================================
+st.markdown("<div class='footer'>© Traffic Police AI | Smart City Initiative</div>", unsafe_allow_html=True)
