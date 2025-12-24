@@ -7,21 +7,29 @@ import easyocr
 from ultralytics import YOLO
 import pandas as pd
 
-# -------------------------------------------------
-# Initialize Models
-# -------------------------------------------------
-reader = easyocr.Reader(['en'], gpu=False)
-yolo_model = YOLO("yolov8n.pt")   # YOLOv8 Nano (CPU friendly)
+# --------------------------------
+# Page Config
+# --------------------------------
+st.set_page_config(
+    page_title="Vehicle Smoke Detection System",
+    layout="wide"
+)
 
-# -------------------------------------------------
-# Session State for Violation History
-# -------------------------------------------------
-if "violations" not in st.session_state:
-    st.session_state.violations = []
+# --------------------------------
+# Load Models (Cached)
+# --------------------------------
+@st.cache_resource
+def load_models():
+    vehicle_model = YOLO("yolov8n.pt")          # vehicle detection
+    plate_model = YOLO("yolov8n.pt")            # reuse for demo (plate via heuristics)
+    reader = easyocr.Reader(['en'], gpu=False)
+    return vehicle_model, plate_model, reader
 
-# -------------------------------------------------
-# Smoke Detection Logic
-# -------------------------------------------------
+vehicle_model, plate_model, reader = load_models()
+
+# --------------------------------
+# Smoke Detection
+# --------------------------------
 def detect_smoke(image_bgr):
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
     _, s, v = cv2.split(hsv)
@@ -30,168 +38,128 @@ def detect_smoke(image_bgr):
     smoke_score = np.sum(smoke_mask) / smoke_mask.size
 
     if smoke_score >= 0.30:
-        status = "Excessive Smoke"
         severity = "High"
-    elif smoke_score >= 0.20:
-        status = "Moderate Smoke"
-        severity = "Medium"
+        status = "Excessive Smoke"
     else:
-        status = "Normal Emission"
         severity = "Low"
+        status = "Normal Emission"
 
-    confidence = int(min(100, smoke_score * 200))
-    return smoke_score, status, severity, confidence
+    confidence = min(int(smoke_score * 200), 100)
 
-# -------------------------------------------------
-# YOLO Number Plate Detection + Bounding Box + OCR
-# -------------------------------------------------
-def detect_plate_with_bbox(image_bgr):
-    results = yolo_model(image_bgr, conf=0.4)
+    return smoke_score, severity, confidence, status
 
-    plate_img = None
-    bbox = None
+# --------------------------------
+# Vehicle Type Detection (YOLO)
+# --------------------------------
+def detect_vehicle_type(image_bgr):
+    results = vehicle_model(image_bgr, conf=0.4)
 
     for r in results:
         if r.boxes is not None:
             for box in r.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                plate_img = image_bgr[y1:y2, x1:x2]
-                bbox = (x1, y1, x2, y2)
-                break
+                cls_id = int(box.cls[0])
+                cls_name = vehicle_model.names[cls_id]
 
-    if plate_img is None or plate_img.size == 0:
-        return "Not Readable", image_bgr, None, None
+                if cls_name in ["car", "truck", "bus", "motorcycle"]:
+                    return cls_name.capitalize(), box.xyxy[0]
 
-    ocr_result = reader.readtext(plate_img)
-    plate_text = ocr_result[0][1] if len(ocr_result) > 0 else "Not Readable"
+    return "Unknown", None
 
-    image_with_box = image_bgr.copy()
-    if bbox:
-        cv2.rectangle(
-            image_with_box,
-            (bbox[0], bbox[1]),
-            (bbox[2], bbox[3]),
-            (0, 255, 0),
-            2
-        )
-
-    return plate_text, image_with_box, plate_img, bbox
-
-# -------------------------------------------------
-# Vehicle Type Detection (Rule-based for Demo)
-# -------------------------------------------------
-def detect_vehicle_type(bbox):
+# --------------------------------
+# Number Plate Detection + OCR
+# --------------------------------
+def detect_number_plate(image_bgr, bbox):
     if bbox is None:
-        return "Unknown"
+        return "Not Readable", None
 
-    x1, y1, x2, y2 = bbox
-    area = (x2 - x1) * (y2 - y1)
+    x1, y1, x2, y2 = map(int, bbox)
+    plate_img = image_bgr[y1:y2, x1:x2]
 
-    if area < 15000:
-        return "Two-Wheeler"
-    elif area < 40000:
-        return "Car"
-    elif area < 70000:
-        return "Bus"
-    else:
-        return "Truck"
+    if plate_img.size == 0:
+        return "Not Readable", None
 
-# -------------------------------------------------
-# Auto e-Challan Generator
-# -------------------------------------------------
-def generate_e_challan(plate_number, severity, vehicle_type):
-    fine_amount = {
-        "Medium": "₹500",
-        "High": "₹1000",
-        "Low": "₹0"
-    }.get(severity, "₹1000")
+    result = reader.readtext(plate_img)
 
-    challan = {
-        "Date & Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Vehicle Number": plate_number,
-        "Vehicle Type": vehicle_type,
-        "Violation": "Excessive Smoke Emission",
-        "Severity": severity,
-        "Fine Amount": fine_amount
-    }
-    return challan
+    if len(result) == 0:
+        return "Not Readable", plate_img
 
-# -------------------------------------------------
-# Streamlit UI
-# -------------------------------------------------
-st.set_page_config(
-    page_title="Vehicle Smoke Detection & Enforcement System",
-    layout="wide"
-)
+    return result[0][1], plate_img
 
-st.title("🚗 Vehicle Smoke Detection & Enforcement System")
-st.write(
-    "AI-powered system for detecting vehicular smoke, identifying vehicles, and generating automated e-challans."
-)
+# --------------------------------
+# Violation History (Session)
+# --------------------------------
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+# --------------------------------
+# UI
+# --------------------------------
+st.title("🚗 Vehicle Smoke Detection System")
+st.write("AI-powered real-time vehicular pollution monitoring using computer vision")
 
 uploaded_file = st.file_uploader(
     "📤 Upload Vehicle Image (CCTV Frame Simulation)",
     type=["jpg", "jpeg", "png"]
 )
 
-if uploaded_file is not None:
+if uploaded_file:
     image = Image.open(uploaded_file)
     image_np = np.array(image)
     image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(image, caption="Original Image", use_column_width=True)
+    st.image(image, caption="Captured Vehicle Frame", use_column_width=True)
 
-    smoke_score, smoke_status, severity, confidence = detect_smoke(image_bgr)
+    # ---- Detection Pipeline ----
+    smoke_score, severity, confidence, smoke_status = detect_smoke(image_bgr)
+    vehicle_type, bbox = detect_vehicle_type(image_bgr)
+    plate_number, plate_crop = detect_number_plate(image_bgr, bbox)
 
-    st.subheader("📊 Smoke Analysis")
-    st.metric("Smoke Score", f"{smoke_score:.2f}")
-    st.metric("Smoke Severity", severity)
-    st.metric("Detection Confidence", f"{confidence}%")
+    # ---- Draw Bounding Box ----
+    if bbox is not None:
+        x1, y1, x2, y2 = map(int, bbox)
+        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    if smoke_status != "Normal Emission":
+    st.subheader("📊 Detection Result")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Smoke Score", f"{smoke_score:.2f}")
+    col2.metric("Smoke Severity", severity)
+    col3.metric("Detection Confidence", f"{confidence}%")
+
+    if smoke_status == "Excessive Smoke":
         st.error("🚨 Polluting Vehicle Detected")
-
-        plate_text, boxed_image, plate_crop, bbox = detect_plate_with_bbox(image_bgr)
-        vehicle_type = detect_vehicle_type(bbox)
-
-        with col2:
-            st.image(
-                cv2.cvtColor(boxed_image, cv2.COLOR_BGR2RGB),
-                caption="YOLO Bounding Box (Number Plate)",
-                use_column_width=True
-            )
-
-        if plate_crop is not None:
-            st.image(
-                cv2.cvtColor(plate_crop, cv2.COLOR_BGR2RGB),
-                caption="Cropped Plate Region",
-                width=300
-            )
-
-        st.info(f"Detected Number Plate: {plate_text}")
-        st.info(f"Vehicle Type: {vehicle_type}")
-
-        challan = generate_e_challan(plate_text, severity, vehicle_type)
-        st.subheader("🧾 Auto-Generated e-Challan")
-
-        for key, value in challan.items():
-            st.write(f"**{key}:** {value}")
-
-        st.session_state.violations.append(challan)
-
     else:
         st.success("✅ Emission Within Permissible Limit")
 
-# -------------------------------------------------
-# Violation History Dashboard
-# -------------------------------------------------
-st.subheader("📊 Violation History Dashboard")
+    st.subheader("🚘 Vehicle Identification")
+    st.info(f"Detected Number Plate: {plate_number}")
+    st.info(f"Vehicle Type: {vehicle_type}")
 
-if len(st.session_state.violations) > 0:
-    df = pd.DataFrame(st.session_state.violations)
+    if plate_crop is not None:
+        st.image(plate_crop, caption="Cropped Plate Region", width=300)
+
+    # ---- e-Challan ----
+    if smoke_status == "Excessive Smoke":
+        st.subheader("🧾 Auto-Generated e-Challan")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        challan = {
+            "Number Plate": plate_number,
+            "Vehicle Type": vehicle_type,
+            "Smoke Score": round(smoke_score, 2),
+            "Severity": severity,
+            "Date & Time": timestamp
+        }
+
+        st.json(challan)
+
+        st.session_state.history.append(challan)
+
+    st.write("🕒 Timestamp:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+# --------------------------------
+# Dashboard
+# --------------------------------
+if len(st.session_state.history) > 0:
+    st.subheader("📈 Violation History Dashboard")
+    df = pd.DataFrame(st.session_state.history)
     st.dataframe(df, use_container_width=True)
-    st.metric("Total Violations Recorded", len(df))
-else:
-    st.info("No violations recorded yet.")
