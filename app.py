@@ -53,7 +53,7 @@ def load_model():
     if YOLO_AVAILABLE:
         try:
             return YOLO("yolov8n.pt")
-        except:
+        except Exception:
             return None
     return None
 
@@ -63,7 +63,6 @@ def load_model():
 def detect_vehicle_and_plate(image):
     model = load_model()
 
-    # ---- YOLO PATH ----
     if model:
         try:
             img = np.array(image)
@@ -77,10 +76,9 @@ def detect_vehicle_and_plate(image):
                             "number_plate": "Under ANPR Verification",
                             "confidence": int(float(box.conf[0]) * 100)
                         }
-        except:
+        except Exception:
             pass
 
-    # ---- SAFE FALLBACK ----
     return {
         "vehicle_type": random.choice(["Car", "Bike", "Truck", "Bus"]),
         "number_plate": "Under ANPR Verification",
@@ -88,7 +86,7 @@ def detect_vehicle_and_plate(image):
     }
 
 # -------------------------------------------------
-# SMOKE DETECTION (UNCHANGED)
+# SMOKE DETECTION
 # -------------------------------------------------
 def detect_smoke(image):
     img = np.array(image.convert("RGB")).astype(np.float32)
@@ -141,7 +139,10 @@ if "violation" not in st.session_state:
 # DETECTION PAGE
 # -------------------------------------------------
 if page == "Detection":
-    uploaded = st.file_uploader("Upload Vehicle Image (CCTV Frame)", type=["jpg", "png", "jpeg"])
+    uploaded = st.file_uploader(
+        "Upload Vehicle Image (CCTV Frame)",
+        type=["jpg", "png", "jpeg"]
+    )
 
     if uploaded:
         image = Image.open(uploaded)
@@ -159,7 +160,10 @@ if page == "Detection":
         st.markdown("</div>", unsafe_allow_html=True)
 
         if severity == "High":
-            st.markdown("<div class='bad'>🚨 Polluting Vehicle Detected</div>", unsafe_allow_html=True)
+            st.markdown(
+                "<div class='bad'>🚨 Polluting Vehicle Detected</div>",
+                unsafe_allow_html=True
+            )
             st.session_state.violation = {
                 "Violation ID": generate_violation_id(),
                 "Vehicle Number": api_data["number_plate"],
@@ -171,7 +175,10 @@ if page == "Detection":
                 "Penalty": "Rs. 5000"
             }
         else:
-            st.markdown("<div class='good'>✅ Emission Within Permissible Limit</div>", unsafe_allow_html=True)
+            st.markdown(
+                "<div class='good'>✅ Emission Within Permissible Limit</div>",
+                unsafe_allow_html=True
+            )
 
 # -------------------------------------------------
 # E-CHALLAN PAGE
@@ -204,14 +211,47 @@ elif page == "Dashboard":
     st.bar_chart(df.set_index("City"))
 
 # -------------------------------------------------
-# ABOUT PAGE (TEAM INFO)
+# ABOUT PAGE (WITH HACKATHON TOPIC)
 # -------------------------------------------------
 else:
-    st.write("""
-## 🚗 Intelligent Vehicle Emission Monitoring System
+    st.write(
+        "## 🚗 Intelligent Vehicle Emission Monitoring System\n\n"
+        "An AI-powered prototype for detecting smoke-emitting vehicles and "
+        "supporting pollution enforcement through automated evidence generation.\n\n"
+        "---\n\n"
+        "## 🎯 Hackathon Topic Overview\n\n"
+        "Urban air pollution caused by vehicular emissions is a major public health concern. "
+        "Manual roadside inspections are inefficient and difficult to scale. "
+        "The TechSprint hackathon encourages innovative, technology-driven solutions "
+        "that enable real-time monitoring, automated violation detection, and data-driven "
+        "enforcement to help build cleaner and smarter cities.\n\n"
+        "---\n\n"
+        "## 🏆 Hackathon Details\n\n"
+        "**Hackathon Name:** TechSprint  \n"
+        "**Team Name:** **BLACK-DRAGON**\n\n"
+        "---\n\n"
+        "## 👥 Team Information\n\n"
+        "**Team Leader:**  \n"
+        "- **Harsha**  \n"
+        "  Registration No: **23BCE8747**\n\n"
+        "**Team Members:**  \n"
+        "- **Hasika**  \n"
+        "  Registration No: **23BCE9934**\n\n"
+        "- **Cheritha**  \n"
+        "  Registration No: **23BCE7686**\n\n"
+        "---\n\n"
+        "## 🧠 System Highlights\n\n"
+        "- Real-time vehicle smoke detection  \n"
+        "- Vehicle type identification using AI  \n"
+        "- Fault-tolerant ANPR verification workflow  \n"
+        "- Automatic e-Challan generation  \n"
+        "- Designed for scalable, real-world deployment\n\n"
+        "---\n\n"
+        "**TechSprint Hackathon Prototype | Streamlit Cloud**"
+    )
 
-An AI-powered prototype for detecting smoke-emitting vehicles and supporting pollution enforcement through automated evidence generation.
-
----
-
-## 🏆
+st.markdown(
+    "<hr style='border:1px solid #333;'>"
+    "<center><b>BLACK-DRAGON</b> | TechSprint Hackathon</center>",
+    unsafe_allow_html=True
+)
