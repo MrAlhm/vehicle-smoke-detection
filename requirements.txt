@@ -1,6 +1,5 @@
 streamlit
 numpy
 pillow
-easyocr
 pandas
 fpdf
