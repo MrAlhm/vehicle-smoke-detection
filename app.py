@@ -55,11 +55,9 @@ def detect_plate_with_bbox(image_bgr):
     if plate_img is None or plate_img.size == 0:
         return "Not Readable", image_bgr, None
 
-    # OCR
     ocr_result = reader.readtext(plate_img)
     plate_text = ocr_result[0][1] if len(ocr_result) > 0 else "Not Readable"
 
-    # Draw bounding box
     image_with_box = image_bgr.copy()
     if bbox:
         cv2.rectangle(
@@ -82,16 +80,36 @@ def detect_plate_with_bbox(image_bgr):
     return plate_text, image_with_box, plate_img
 
 # -------------------------------------------------
+# Auto e-Challan Generator
+# -------------------------------------------------
+def generate_e_challan(plate_number, severity):
+    fine_amount = {
+        "Medium": "₹500",
+        "High": "₹1000",
+        "Low": "₹0"
+    }.get(severity, "₹1000")
+
+    challan = {
+        "Vehicle Number": plate_number,
+        "Violation": "Excessive Smoke Emission",
+        "Severity Level": severity,
+        "Fine Amount": fine_amount,
+        "Date & Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Status": "Generated"
+    }
+    return challan
+
+# -------------------------------------------------
 # Streamlit UI
 # -------------------------------------------------
 st.set_page_config(
-    page_title="Vehicle Smoke Detection System",
+    page_title="Vehicle Smoke Detection & e-Challan System",
     layout="centered"
 )
 
-st.title("🚗 Vehicle Smoke Detection System")
+st.title("🚗 Vehicle Smoke Detection & Auto e-Challan System")
 st.write(
-    "AI-based system to detect excessive vehicular smoke using traffic camera images."
+    "AI-based system for detecting excessive vehicular smoke and generating automated e-challans."
 )
 
 uploaded_file = st.file_uploader(
@@ -119,7 +137,6 @@ if uploaded_file is not None:
         plate_text, boxed_image, plate_crop = detect_plate_with_bbox(image_bgr)
 
         st.subheader("🚘 Number Plate Detection")
-
         st.image(
             cv2.cvtColor(boxed_image, cv2.COLOR_BGR2RGB),
             caption="Detected Number Plate (Bounding Box)",
@@ -134,6 +151,14 @@ if uploaded_file is not None:
             )
 
         st.info(f"Detected Number Plate: {plate_text}")
+
+        # Generate e-Challan
+        challan = generate_e_challan(plate_text, severity)
+
+        st.subheader("🧾 Auto-Generated e-Challan")
+        for key, value in challan.items():
+            st.write(f"**{key}:** {value}")
+
     else:
         st.success("✅ Emission Within Permissible Limit")
 
