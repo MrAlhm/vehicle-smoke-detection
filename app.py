@@ -5,7 +5,6 @@ from datetime import datetime
 from fpdf import FPDF
 import pandas as pd
 import random
-import cv2
 from ultralytics import YOLO
 
 # -------------------------------------------------
