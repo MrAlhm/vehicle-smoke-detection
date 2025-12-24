@@ -4,15 +4,17 @@ import numpy as np
 from PIL import Image
 from datetime import datetime
 import easyocr
+from ultralytics import YOLO
 
-# --------------------------------
-# Initialize OCR Reader (DL Model)
-# --------------------------------
+# -------------------------------------------------
+# Initialize Models (loaded once)
+# -------------------------------------------------
 reader = easyocr.Reader(['en'], gpu=False)
+yolo_model = YOLO("yolov8n.pt")   # YOLOv8 Nano (CPU friendly)
 
-# --------------------------------
-# Smoke Detection Function
-# --------------------------------
+# -------------------------------------------------
+# Smoke Detection Logic
+# -------------------------------------------------
 def detect_smoke(image_bgr):
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
@@ -22,63 +24,46 @@ def detect_smoke(image_bgr):
 
     if smoke_score >= 0.30:
         status = "Excessive Smoke"
+        severity = "High"
+    elif smoke_score >= 0.20:
+        status = "Moderate Smoke"
+        severity = "Medium"
     else:
         status = "Normal Emission"
+        severity = "Low"
 
-    return smoke_score, status
+    confidence = int(min(100, smoke_score * 200))
 
-# --------------------------------
-# Smoke Severity + Confidence
-# --------------------------------
-def get_smoke_severity_and_confidence(smoke_score):
-    if smoke_score < 0.15:
-        severity = "Normal"
-    elif smoke_score < 0.30:
-        severity = "Mild"
-    elif smoke_score < 0.50:
-        severity = "High"
-    else:
-        severity = "Severe"
+    return smoke_score, status, severity, confidence
 
-    confidence = min(100, int(smoke_score * 200))
-    return severity, confidence
-
-# --------------------------------
-# Number Plate Detection Function
-# --------------------------------
-def detect_number_plate(image_bgr):
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blur, 100, 200)
-
-    contours, _ = cv2.findContours(
-        edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-    )
+# -------------------------------------------------
+# YOLO-based Number Plate Detection + OCR
+# -------------------------------------------------
+def detect_number_plate_yolo(image_bgr):
+    results = yolo_model(image_bgr, conf=0.4)
 
     plate_img = None
 
-    for cnt in contours:
-        approx = cv2.approxPolyDP(
-            cnt, 0.018 * cv2.arcLength(cnt, True), True
-        )
-        if len(approx) == 4:
-            x, y, w, h = cv2.boundingRect(approx)
-            plate_img = image_bgr[y:y+h, x:x+w]
-            break
+    for r in results:
+        if r.boxes is not None:
+            for box in r.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                plate_img = image_bgr[y1:y2, x1:x2]
+                break
 
-    if plate_img is None:
+    if plate_img is None or plate_img.size == 0:
         return "Not Readable"
 
-    result = reader.readtext(plate_img)
+    ocr_result = reader.readtext(plate_img)
 
-    if len(result) == 0:
+    if len(ocr_result) == 0:
         return "Not Readable"
 
-    return result[0][1]
+    return ocr_result[0][1]
 
-# --------------------------------
+# -------------------------------------------------
 # Streamlit UI
-# --------------------------------
+# -------------------------------------------------
 st.set_page_config(
     page_title="Vehicle Smoke Detection System",
     layout="centered"
@@ -94,9 +79,6 @@ uploaded_file = st.file_uploader(
     type=["jpg", "jpeg", "png"]
 )
 
-# ✅ Demo Mode Toggle
-demo_mode = st.checkbox("🎥 Demo Mode: Force Number Plate Detection")
-
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption="Captured Vehicle Frame", use_column_width=True)
@@ -104,21 +86,17 @@ if uploaded_file is not None:
     image_np = np.array(image)
     image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
-    smoke_score, smoke_status = detect_smoke(image_bgr)
-    severity, confidence = get_smoke_severity_and_confidence(smoke_score)
+    smoke_score, smoke_status, severity, confidence = detect_smoke(image_bgr)
 
     st.subheader("📊 Detection Result")
     st.metric("Smoke Score", f"{smoke_score:.2f}")
     st.metric("Smoke Severity", severity)
     st.metric("Detection Confidence", f"{confidence}%")
 
-    # 🚨 Enforcement Logic
-    if smoke_status == "Excessive Smoke":
+    if smoke_status != "Normal Emission":
         st.error("🚨 Polluting Vehicle Detected")
 
-    # 🚘 Number Plate Detection (Normal or Demo Mode)
-    if smoke_status == "Excessive Smoke" or demo_mode:
-        plate_number = detect_number_plate(image_bgr)
+        plate_number = detect_number_plate_yolo(image_bgr)
         st.subheader("🚘 Vehicle Identification")
         st.info(f"Detected Number Plate: {plate_number}")
     else:
