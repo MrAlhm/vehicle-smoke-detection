@@ -1,10 +1,6 @@
 streamlit
 numpy
 pillow
-opencv-python-headless
 easyocr
-torch
-torchvision
-ultralytics
 pandas
 fpdf
