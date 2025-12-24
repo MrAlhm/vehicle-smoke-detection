@@ -1,10 +1,7 @@
 streamlit
-numpy
-pandas
 opencv-python-headless
-Pillow
+numpy
+pillow
 easyocr
-fpdf2
+fpdf
 plotly
-folium
-streamlit-folium
