@@ -28,6 +28,22 @@ def detect_smoke(image_bgr):
     return smoke_score, status
 
 # --------------------------------
+# Smoke Severity + Confidence
+# --------------------------------
+def get_smoke_severity_and_confidence(smoke_score):
+    if smoke_score < 0.15:
+        severity = "Normal"
+    elif smoke_score < 0.30:
+        severity = "Mild"
+    elif smoke_score < 0.50:
+        severity = "High"
+    else:
+        severity = "Severe"
+
+    confidence = min(100, int(smoke_score * 200))
+    return severity, confidence
+
+# --------------------------------
 # Number Plate Detection Function
 # --------------------------------
 def detect_number_plate(image_bgr):
@@ -86,10 +102,12 @@ if uploaded_file is not None:
     image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
     smoke_score, smoke_status = detect_smoke(image_bgr)
+    severity, confidence = get_smoke_severity_and_confidence(smoke_score)
 
     st.subheader("📊 Detection Result")
     st.metric("Smoke Score", f"{smoke_score:.2f}")
-    st.metric("Smoke Status", smoke_status)
+    st.metric("Smoke Severity", severity)
+    st.metric("Detection Confidence", f"{confidence}%")
 
     if smoke_status == "Excessive Smoke":
         st.error("🚨 Polluting Vehicle Detected")
@@ -104,4 +122,3 @@ if uploaded_file is not None:
         "🕒 Timestamp:",
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
-
