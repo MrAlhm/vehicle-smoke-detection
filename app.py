@@ -9,33 +9,41 @@ import tempfile
 import matplotlib.pyplot as plt
 
 # ================================
-# Initialize OCR (DL Model)
+# Page Config
+# ================================
+st.set_page_config(
+    page_title="Vehicle Smoke Detection System",
+    layout="centered"
+)
+
+# ================================
+# Initialize OCR (DL model)
 # ================================
 reader = easyocr.Reader(['en'], gpu=False)
 
 # ================================
-# Smoke Detection
+# Smoke Detection Logic
 # ================================
 def detect_smoke(image_bgr):
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
+    _, s, v = cv2.split(hsv)
 
     smoke_mask = (s < 60) & (v > 150)
     smoke_score = np.sum(smoke_mask) / smoke_mask.size
 
     if smoke_score >= 0.30:
-        severity = "High"
         status = "Excessive Smoke"
+        severity = "High"
     else:
-        severity = "Low"
         status = "Normal Emission"
+        severity = "Low"
 
-    confidence = int(min(100, smoke_score * 200))
+    confidence = min(int(smoke_score * 200), 100)
 
     return smoke_score, status, severity, confidence
 
 # ================================
-# Number Plate Detection (Demo)
+# Number Plate Detection (Demo-safe)
 # ================================
 def detect_number_plate(image_bgr):
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
@@ -64,12 +72,16 @@ def detect_number_plate(image_bgr):
     return result[0][1], plate_img
 
 # ================================
-# Streamlit UI
+# Session State (Violation History)
 # ================================
-st.set_page_config(page_title="Vehicle Smoke Detection System", layout="centered")
+if "violations" not in st.session_state:
+    st.session_state.violations = []
 
+# ================================
+# UI
+# ================================
 st.title("🚗 Vehicle Smoke Detection System")
-st.write("AI-based real-time smoke monitoring using CCTV simulation.")
+st.write("AI-based vehicular smoke monitoring using CCTV simulation.")
 
 camera_id = st.selectbox(
     "📍 Camera Location",
@@ -82,20 +94,14 @@ uploaded_file = st.file_uploader(
 )
 
 # ================================
-# Session Storage
-# ================================
-if "violations" not in st.session_state:
-    st.session_state.violations = []
-
-# ================================
 # IMAGE MODE
 # ================================
 if uploaded_file and uploaded_file.type.startswith("image"):
     image = Image.open(uploaded_file)
-    st.image(image, caption="Captured Frame", use_column_width=True)
-
     image_np = np.array(image)
     image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+
+    st.image(image, caption="Captured Frame", use_column_width=True)
 
     smoke_score, status, severity, confidence = detect_smoke(image_bgr)
 
@@ -118,13 +124,13 @@ if uploaded_file and uploaded_file.type.startswith("image"):
             "Plate": plate,
             "Camera": camera_id,
             "Severity": severity,
-            "Time": datetime.now()
+            "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
     else:
         st.success("✅ Emission Within Permissible Limit")
 
 # ================================
-# VIDEO MODE (FIRST 20 FRAMES)
+# VIDEO MODE (First 20 Frames)
 # ================================
 elif uploaded_file and uploaded_file.type.startswith("video"):
     tfile = tempfile.NamedTemporaryFile(delete=False)
@@ -132,7 +138,6 @@ elif uploaded_file and uploaded_file.type.startswith("video"):
     cap = cv2.VideoCapture(tfile.name)
 
     frame_count = 0
-
     st.subheader("🎥 CCTV Frame Processing (First 20 Frames)")
 
     while cap.isOpened() and frame_count < 20:
@@ -155,7 +160,7 @@ elif uploaded_file and uploaded_file.type.startswith("video"):
                 "Plate": plate,
                 "Camera": camera_id,
                 "Severity": severity,
-                "Time": datetime.now()
+                "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
 
         frame_count += 1
@@ -164,25 +169,27 @@ elif uploaded_file and uploaded_file.type.startswith("video"):
     st.success("✅ Video analysis completed (20-frame limit)")
 
 # ================================
-# HOTSPOT DASHBOARD
+# HOTSPOT DASHBOARD (SAFE)
 # ================================
 if len(st.session_state.violations) > 0:
-    st.subheader("📍 Pollution Hotspot Dashboard")
-
     df = pd.DataFrame(st.session_state.violations)
 
-    st.dataframe(df)
+    if "Camera" in df.columns:
+        st.subheader("📍 Pollution Hotspot Dashboard")
+        st.dataframe(df, use_container_width=True)
 
-    hotspot = df["Camera"].value_counts()
+        hotspot = df["Camera"].value_counts()
 
-    fig, ax = plt.subplots()
-    hotspot.plot(kind="bar", ax=ax)
-    ax.set_title("Violations per Camera Location")
-    ax.set_ylabel("Number of Violations")
+        fig, ax = plt.subplots()
+        hotspot.plot(kind="bar", ax=ax)
+        ax.set_title("Violations per Camera Location")
+        ax.set_ylabel("Number of Violations")
 
-    st.pyplot(fig)
+        st.pyplot(fig)
+    else:
+        st.info("No camera-wise violation data available yet.")
 
 # ================================
-# FOOTER
+# Footer
 # ================================
 st.write("🕒 Last Updated:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
