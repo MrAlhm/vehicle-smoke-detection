@@ -5,108 +5,147 @@ from PIL import Image
 from datetime import datetime
 import pandas as pd
 import easyocr
+from fpdf import FPDF
 
 # =====================================================
 # PAGE CONFIG
 # =====================================================
 st.set_page_config(
-    page_title="Traffic Police Smoke Monitoring System",
-    layout="wide",
-    page_icon="🚓"
+    page_title="Smart Emission Detection Platform",
+    layout="wide"
 )
 
 # =====================================================
-# CUSTOM POLICE THEME CSS
+# GLOBAL CSS – PROFESSIONAL STARTUP THEME
 # =====================================================
 st.markdown("""
 <style>
-body {
-    background-color: #0b132b;
+
+/* Base */
+html, body {
+    background-color: #0e1117;
+    font-family: 'Inter', sans-serif;
 }
-.main {
-    background-color: #0b132b;
+
+/* Remove Streamlit branding */
+#MainMenu, footer, header {
+    visibility: hidden;
 }
-.sidebar .sidebar-content {
-    background-color: #1c2541;
-}
-h1, h2, h3, h4 {
-    color: #ffffff;
-}
-.metric-label {
-    color: #ffffff !important;
-}
-.metric-value {
-    color: #fca311 !important;
-}
-.alert-box {
-    background: linear-gradient(90deg, #9b2226, #ae2012);
-    padding: 15px;
-    border-radius: 10px;
+
+/* Hero section */
+.hero {
+    background: linear-gradient(135deg, #0b3c49, #1b6b63);
+    padding: 60px;
+    border-radius: 25px;
     color: white;
-    font-size: 18px;
+    margin-bottom: 40px;
 }
-.success-box {
-    background: linear-gradient(90deg, #2a9d8f, #40916c);
-    padding: 15px;
-    border-radius: 10px;
-    color: white;
-    font-size: 18px;
-}
+
+/* Section card */
 .card {
-    background-color: #1c2541;
-    padding: 20px;
+    background-color: #161b22;
+    border-radius: 18px;
+    padding: 30px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    margin-bottom: 30px;
+}
+
+/* Upload box */
+.upload-box {
+    border: 2px dashed #2dd4bf;
     border-radius: 15px;
-    margin-bottom: 15px;
-    box-shadow: 0 0 10px rgba(0,0,0,0.4);
+    padding: 40px;
+    text-align: center;
+    color: #9ca3af;
+    margin-top: 20px;
 }
-.footer {
-    text-align:center;
-    color:#adb5bd;
-    margin-top:40px;
+
+/* Metric style */
+.metric {
+    background-color: #0f172a;
+    border-radius: 15px;
+    padding: 25px;
+    text-align: center;
 }
+
+/* Alert */
+.alert {
+    background: linear-gradient(90deg, #7f1d1d, #991b1b);
+    padding: 18px;
+    border-radius: 12px;
+    color: white;
+    font-size: 18px;
+}
+
+/* Success */
+.success {
+    background: linear-gradient(90deg, #064e3b, #065f46);
+    padding: 18px;
+    border-radius: 12px;
+    color: white;
+    font-size: 18px;
+}
+
+/* Button */
+.download-btn {
+    background-color: #2563eb;
+    padding: 10px 22px;
+    border-radius: 10px;
+    color: white;
+    font-weight: 600;
+}
+
+/* Top navigation */
+.nav {
+    display: flex;
+    gap: 30px;
+    margin-bottom: 25px;
+    font-weight: 500;
+    color: #9ca3af;
+}
+
+.nav-item {
+    cursor: pointer;
+}
+
+.nav-item-active {
+    color: #2dd4bf;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 # =====================================================
 # SESSION STATE
 # =====================================================
-if "image" not in st.session_state:
-    st.session_state.image = None
+if "media" not in st.session_state:
+    st.session_state.media = None
 
 if "records" not in st.session_state:
     st.session_state.records = []
 
+if "page" not in st.session_state:
+    st.session_state.page = "Detection"
+
 # =====================================================
-# SIDEBAR (POLICE CONSOLE)
+# TOP NAVIGATION (CLEAN, SMALL)
 # =====================================================
-st.sidebar.markdown("## 🚓 Traffic Police Console")
+cols = st.columns([1,1,1,1,1])
+pages = ["Detection", "CCTV", "e-Challan", "Analytics", "About"]
 
-page = st.sidebar.radio(
-    "Navigation",
-    ["🚨 Detection", "📹 CCTV", "🧾 e-Challan", "📊 Dashboard", "🔥 Hotspots", "ℹ About"]
-)
+for i, p in enumerate(pages):
+    if cols[i].button(p, key=p):
+        st.session_state.page = p
 
-camera_location = st.sidebar.selectbox(
-    "📍 Camera Location",
-    [
-        "Delhi – Connaught Place",
-        "Delhi – Anand Vihar",
-        "Mumbai – Andheri East",
-        "Mumbai – Bandra West",
-        "Bengaluru – Silk Board",
-        "Chennai – T Nagar",
-        "Hyderabad – Hitech City",
-        "Kolkata – Salt Lake"
-    ]
-)
-
-uploaded_file = st.sidebar.file_uploader(
-    "📤 Upload CCTV Image",
-    type=["jpg", "jpeg", "png"]
-)
-
-if uploaded_file:
-    st.session_state.image = uploaded_file
+# =====================================================
+# HERO SECTION
+# =====================================================
+st.markdown("""
+<div class="hero">
+<h1>Smart Vehicle Emission Monitoring</h1>
+<p>AI-powered detection of excessive vehicular smoke using traffic camera imagery.</p>
+</div>
+""", unsafe_allow_html=True)
 
 # =====================================================
 # MODELS
@@ -114,27 +153,23 @@ if uploaded_file:
 reader = easyocr.Reader(['en'], gpu=False)
 
 # =====================================================
-# FUNCTIONS
+# CORE FUNCTIONS
 # =====================================================
 def detect_smoke(image):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-
+    _, s, v = cv2.split(hsv)
     smoke_mask = (s < 60) & (v > 150)
     score = np.sum(smoke_mask) / smoke_mask.size
 
     if score >= 0.35:
-        severity = "HIGH"
-        status = "POLLUTING"
+        level = "High"
     elif score >= 0.20:
-        severity = "MEDIUM"
-        status = "SUSPICIOUS"
+        level = "Moderate"
     else:
-        severity = "LOW"
-        status = "NORMAL"
+        level = "Low"
 
     confidence = min(95, int(score * 200))
-    return score, severity, status, confidence
+    return score, level, confidence
 
 
 def detect_number_plate(image):
@@ -147,134 +182,107 @@ def detect_number_plate(image):
         if len(approx) == 4:
             x, y, w, h = cv2.boundingRect(approx)
             plate = image[y:y+h, x:x+w]
-            text = reader.readtext(plate)
-            if text:
-                return text[0][1], plate
+            result = reader.readtext(plate)
+            if result:
+                return result[0][1], plate
     return "Not Readable", None
-
-
-def detect_vehicle_type(image):
-    h, w, _ = image.shape
-    if w > 1100:
-        return "Truck / Bus"
-    elif w > 700:
-        return "Car"
-    else:
-        return "Two-Wheeler"
-
-# =====================================================
-# HEADER
-# =====================================================
-st.markdown("""
-<div class="card">
-<h1>🚓 Traffic Police Vehicle Smoke Monitoring System</h1>
-<p>AI-Powered Enforcement | Smart City Pollution Control</p>
-</div>
-""", unsafe_allow_html=True)
 
 # =====================================================
 # PAGE: DETECTION
 # =====================================================
-if page == "🚨 Detection":
+if st.session_state.page == "Detection":
 
-    if st.session_state.image is None:
-        st.warning("📤 Upload a CCTV image from sidebar")
-    else:
-        img = Image.open(st.session_state.image)
-        st.image(img, caption="📸 CCTV Captured Vehicle", use_column_width=True)
+    st.markdown("<div class='card'><h2>Upload Vehicle Image or CCTV Frame</h2></div>", unsafe_allow_html=True)
 
-        img_np = np.array(img)
+    uploaded = st.file_uploader(
+        "",
+        type=["jpg", "jpeg", "png"]
+    )
+
+    if uploaded:
+        st.session_state.media = uploaded
+
+    if st.session_state.media:
+        image = Image.open(st.session_state.media)
+        st.image(image, use_column_width=True)
+
+        img_np = np.array(image)
         img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
-        score, severity, status, confidence = detect_smoke(img_bgr)
+        score, level, confidence = detect_smoke(img_bgr)
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Smoke Score", f"{score:.2f}")
-        col2.metric("Severity", severity)
-        col3.metric("Status", status)
-        col4.metric("Confidence", f"{confidence}%")
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='metric'><h3>Smoke Score</h3><h1>{score:.2f}</h1></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='metric'><h3>Severity</h3><h1>{level}</h1></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='metric'><h3>Confidence</h3><h1>{confidence}%</h1></div>", unsafe_allow_html=True)
 
-        if status != "NORMAL":
-            st.markdown('<div class="alert-box">🚨 POLLUTING VEHICLE DETECTED</div>', unsafe_allow_html=True)
+        if level != "Low":
+            st.markdown("<div class='alert'>Polluting vehicle detected</div>", unsafe_allow_html=True)
 
             plate, plate_img = detect_number_plate(img_bgr)
-            vehicle = detect_vehicle_type(img_bgr)
-
             if plate_img is not None:
-                st.image(plate_img, caption="🔍 Cropped Number Plate", width=300)
+                st.image(plate_img, width=300)
 
-            st.info(f"🚘 Vehicle Number: {plate}")
-            st.info(f"🚚 Vehicle Type: {vehicle}")
-            st.info(f"📍 Camera: {camera_location}")
+            st.write("Detected Number Plate:", plate)
 
             st.session_state.records.append({
                 "Time": datetime.now(),
-                "Camera": camera_location,
                 "Plate": plate,
-                "Vehicle": vehicle,
-                "Severity": severity
+                "Severity": level
             })
         else:
-            st.markdown('<div class="success-box">✅ EMISSION WITHIN LEGAL LIMIT</div>', unsafe_allow_html=True)
+            st.markdown("<div class='success'>Emission within permissible limits</div>", unsafe_allow_html=True)
 
 # =====================================================
 # PAGE: E-CHALLAN
 # =====================================================
-elif page == "🧾 e-Challan":
-    st.subheader("🧾 Auto-Generated Traffic Police e-Challan")
+elif st.session_state.page == "e-Challan":
+
+    st.markdown("<div class='card'><h2>e-Challan</h2></div>", unsafe_allow_html=True)
 
     if not st.session_state.records:
-        st.warning("No violations recorded")
+        st.info("No violations recorded yet.")
     else:
         last = st.session_state.records[-1]
-        st.json({
-            "Date & Time": last["Time"].strftime("%Y-%m-%d %H:%M:%S"),
-            "Camera": last["Camera"],
-            "Vehicle No": last["Plate"],
-            "Vehicle Type": last["Vehicle"],
-            "Offence": "Excessive Smoke Emission",
-            "Fine": "₹5000"
-        })
+
+        col1, col2 = st.columns([4,1])
+        with col1:
+            st.write("Vehicle:", last["Plate"])
+            st.write("Severity:", last["Severity"])
+            st.write("Time:", last["Time"])
+            st.write("Fine: ₹5000")
+        with col2:
+            if st.button("Download PDF"):
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                for k,v in last.items():
+                    pdf.cell(0, 10, f"{k}: {v}", ln=True)
+                pdf.output("challan.pdf")
+                st.success("Downloaded")
 
 # =====================================================
-# PAGE: DASHBOARD
+# PAGE: ANALYTICS
 # =====================================================
-elif page == "📊 Dashboard":
-    st.subheader("📊 Police Analytics Dashboard")
-
+elif st.session_state.page == "Analytics":
+    st.markdown("<div class='card'><h2>Analytics</h2></div>", unsafe_allow_html=True)
     if st.session_state.records:
         df = pd.DataFrame(st.session_state.records)
         st.dataframe(df)
         st.bar_chart(df["Severity"].value_counts())
     else:
-        st.warning("No data yet")
-
-# =====================================================
-# PAGE: HOTSPOTS
-# =====================================================
-elif page == "🔥 Hotspots":
-    st.subheader("🔥 Pollution Hotspot Analysis")
-
-    if st.session_state.records:
-        df = pd.DataFrame(st.session_state.records)
-        st.bar_chart(df["Camera"].value_counts())
-    else:
-        st.warning("No hotspot data")
+        st.info("No data yet")
 
 # =====================================================
 # PAGE: ABOUT
 # =====================================================
-elif page == "ℹ About":
+elif st.session_state.page == "About":
     st.markdown("""
-    ### 🚓 About This System
-    - Designed for Indian Traffic Police
-    - AI-based real-time pollution enforcement
-    - Number plate recognition
-    - Smart city analytics
-    - Hackathon-ready prototype
-    """)
-
-# =====================================================
-# FOOTER
-# =====================================================
-st.markdown("<div class='footer'>© Traffic Police AI | Smart City Initiative</div>", unsafe_allow_html=True)
+    <div class='card'>
+    <h2>About This Platform</h2>
+    <p>
+    A professional-grade AI system designed to assist cities in monitoring
+    vehicular emissions using computer vision and deep learning.
+    </p>
+    </div>
+    """, unsafe_allow_html=True)
