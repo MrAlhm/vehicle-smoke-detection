@@ -1,7 +1,9 @@
 streamlit
-opencv-python-headless
 numpy
+opencv-python-headless
 pillow
 easyocr
 fpdf
 plotly
+pandas
+ultralytics
