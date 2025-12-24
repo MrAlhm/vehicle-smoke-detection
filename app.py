@@ -1,221 +1,204 @@
 import streamlit as st
-import cv2
 import numpy as np
 from PIL import Image
 from datetime import datetime
 import easyocr
+import pandas as pd
 from fpdf import FPDF
-import tempfile
-import os
+import io
 
-# ==============================
-# PAGE CONFIG
-# ==============================
+# ------------------------------
+# App Config
+# ------------------------------
 st.set_page_config(
     page_title="Smart Vehicle Emission Monitoring",
     layout="wide"
 )
 
-# ==============================
-# BACKGROUND + STYLES
-# ==============================
+# ------------------------------
+# Styling (Professional, Clean)
+# ------------------------------
+st.markdown("""
+<style>
+body {
+    background-color: #0f172a;
+}
+.big-title {
+    font-size: 42px;
+    font-weight: 700;
+}
+.sub-title {
+    font-size: 18px;
+    color: #cbd5e1;
+}
+.card {
+    background-color: #020617;
+    padding: 20px;
+    border-radius: 14px;
+    margin-bottom: 20px;
+}
+.bad {
+    background-color: #3f1d1d;
+    padding: 12px;
+    border-radius: 10px;
+}
+.good {
+    background-color: #1d3f2a;
+    padding: 12px;
+    border-radius: 10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ------------------------------
+# Header
+# ------------------------------
 st.markdown(
-    """
-    <style>
-    .stApp {
-        background: linear-gradient(
-            rgba(0,0,0,0.75),
-            rgba(0,0,0,0.75)
-        ),
-        url("https://images.unsplash.com/photo-1503376780353-7e6692767b70");
-        background-size: cover;
-        background-attachment: fixed;
-    }
-    .card {
-        background: rgba(20,20,20,0.9);
-        padding: 20px;
-        border-radius: 15px;
-        margin-bottom: 15px;
-    }
-    </style>
-    """,
+    '<div class="card">'
+    '<div class="big-title">Smart Vehicle Emission Monitoring</div>'
+    '<div class="sub-title">AI-powered pollution detection & enforcement platform</div>'
+    '</div>',
     unsafe_allow_html=True
 )
 
-# ==============================
-# OCR MODEL
-# ==============================
+# ------------------------------
+# Initialize OCR (Deep Learning)
+# ------------------------------
 reader = easyocr.Reader(['en'], gpu=False)
 
-# ==============================
-# SMOKE DETECTION
-# ==============================
-def detect_smoke(image_bgr):
-    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-    _, s, v = cv2.split(hsv)
+# ------------------------------
+# Smoke Detection (PIL + NumPy)
+# ------------------------------
+def detect_smoke_pil(image):
+    img = np.array(image.convert("RGB"))
+    gray = np.mean(img, axis=2)
 
-    smoke_mask = (s < 70) & (v > 140)
-    score = np.sum(smoke_mask) / smoke_mask.size
+    bright_pixels = gray > 200
+    smoke_score = np.sum(bright_pixels) / bright_pixels.size
 
-    if score >= 0.30:
-        severity = "High"
-    elif score >= 0.18:
-        severity = "Moderate"
+    if smoke_score > 0.28:
+        return smoke_score, "High"
+    elif smoke_score > 0.18:
+        return smoke_score, "Moderate"
     else:
-        severity = "Low"
+        return smoke_score, "Low"
 
-    return score, severity
-
-# ==============================
-# NUMBER PLATE DETECTION
-# ==============================
-def detect_number_plate(image_bgr):
-    result = reader.readtext(image_bgr)
-    for r in result:
-        text = r[1]
-        if len(text) >= 6 and any(char.isdigit() for char in text):
-            return text.replace(" ", "")
+# ------------------------------
+# Number Plate OCR
+# ------------------------------
+def detect_number_plate(image):
+    results = reader.readtext(np.array(image))
+    for (_, text, conf) in results:
+        if len(text) >= 6 and conf > 0.4:
+            return text.upper()
     return "Not Readable"
 
-# ==============================
-# VEHICLE TYPE (SAFE HEURISTIC)
-# ==============================
+# ------------------------------
+# Vehicle Type (Rule-Based)
+# ------------------------------
 def detect_vehicle_type(image):
-    h, w, _ = image.shape
+    w, h = image.size
     ratio = w / h
 
     if ratio > 2.2:
         return "Bus / Truck"
-    elif ratio > 1.6:
-        return "Car"
+    elif ratio > 1.5:
+        return "Car / SUV"
     else:
         return "Two-Wheeler"
 
-# ==============================
-# E-CHALLAN PDF
-# ==============================
+# ------------------------------
+# e-Challan PDF
+# ------------------------------
 def generate_challan(data):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
     pdf.cell(0, 10, "Government of India", ln=True)
-    pdf.cell(0, 10, "Electronic Traffic Violation Challan", ln=True)
+    pdf.cell(0, 10, "Auto-Generated Pollution e-Challan", ln=True)
     pdf.ln(5)
 
     for k, v in data.items():
         pdf.cell(0, 8, f"{k}: {v}", ln=True)
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf.output(tmp.name)
-    return tmp.name
+    buffer = io.BytesIO()
+    pdf.output(buffer)
+    buffer.seek(0)
+    return buffer
 
-# ==============================
-# SIDEBAR NAV
-# ==============================
-st.sidebar.title("Navigation")
-section = st.sidebar.radio(
-    "Go to",
-    ["Detection", "e-Challan", "About"]
+# ------------------------------
+# Upload Section
+# ------------------------------
+st.markdown('<div class="card">', unsafe_allow_html=True)
+uploaded = st.file_uploader(
+    "Upload Vehicle Image (CCTV Frame Simulation)",
+    type=["jpg", "jpeg", "png"]
 )
+st.markdown('</div>', unsafe_allow_html=True)
 
-# ==============================
-# HERO
-# ==============================
-st.markdown(
-    """
-    <div class='card'>
-        <h1>Smart Vehicle Emission Monitoring</h1>
-        <p>AI-powered smoke detection & enforcement platform</p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# ------------------------------
+# Main Processing
+# ------------------------------
+if uploaded:
+    image = Image.open(uploaded)
+    st.image(image, caption="Captured Vehicle Frame", use_column_width=True)
 
-# ==============================
-# DETECTION SECTION
-# ==============================
-if section == "Detection":
+    smoke_score, severity = detect_smoke_pil(image)
+    plate = detect_number_plate(image)
+    vehicle_type = detect_vehicle_type(image)
 
-    uploaded = st.file_uploader(
-        "Upload Vehicle Image",
-        type=["jpg", "jpeg", "png"]
-    )
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Detection Result")
 
-    if uploaded:
-        img = Image.open(uploaded)
-        img_np = np.array(img)
-        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+    st.write(f"Smoke Score: **{smoke_score:.2f}**")
+    st.write(f"Smoke Severity: **{severity}**")
 
-        col1, col2 = st.columns(2)
+    if severity == "High":
+        st.markdown('<div class="bad">🚨 Polluting Vehicle Detected</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="good">✅ Emission Within Limit</div>', unsafe_allow_html=True)
 
-        with col1:
-            st.image(img, caption="Captured Frame", use_column_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        smoke_score, severity = detect_smoke(img_bgr)
-        plate = detect_number_plate(img_bgr)
-        vtype = detect_vehicle_type(img_np)
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Vehicle Identification")
+    st.write(f"Number Plate: **{plate}**")
+    st.write(f"Vehicle Type: **{vehicle_type}**")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        confidence = min(int(smoke_score * 200), 100)
-
-        with col2:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.metric("Smoke Score", f"{smoke_score:.2f}")
-            st.metric("Severity", severity)
-            st.metric("Detection Confidence", f"{confidence}%")
-            st.metric("Vehicle Type", vtype)
-            st.metric("Number Plate", plate)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        if severity != "Low":
-            st.error("Polluting Vehicle Detected")
-
-        st.session_state["latest"] = {
-            "Plate": plate,
-            "Vehicle": vtype,
-            "Severity": severity,
-            "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # ------------------------------
+    # e-Challan
+    # ------------------------------
+    if severity == "High":
+        challan_data = {
+            "Number Plate": plate,
+            "Vehicle Type": vehicle_type,
+            "Smoke Severity": severity,
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Fine Amount": "₹2000",
+            "Violation": "Excessive Vehicular Emission"
         }
 
-# ==============================
-# E-CHALLAN SECTION
-# ==============================
-elif section == "e-Challan":
+        pdf = generate_challan(challan_data)
 
-    if "latest" not in st.session_state:
-        st.warning("No violation detected yet.")
-    else:
-        data = st.session_state["latest"]
+        st.download_button(
+            "Download e-Challan (PDF)",
+            data=pdf,
+            file_name="e_challan.pdf",
+            mime="application/pdf"
+        )
 
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Auto-Generated e-Challan")
+# ------------------------------
+# Dashboard (History)
+# ------------------------------
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.subheader("Violation Analytics (Demo Data)")
 
-        for k, v in data.items():
-            st.write(f"**{k}**: {v}")
+df = pd.DataFrame({
+    "City": ["Delhi", "Delhi", "Mumbai", "Delhi", "Bengaluru"],
+    "Severity": ["High", "Moderate", "High", "High", "Moderate"]
+})
 
-        pdf_path = generate_challan(data)
-        with open(pdf_path, "rb") as f:
-            st.download_button(
-                "Download e-Challan",
-                f,
-                file_name="e_challan.pdf"
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-# ==============================
-# ABOUT
-# ==============================
-else:
-    st.markdown(
-        """
-        <div class='card'>
-        <h3>About</h3>
-        <p>
-        This prototype demonstrates an AI-powered vehicle emission monitoring system.
-        It detects excessive smoke, extracts number plates, identifies vehicle type,
-        and generates enforceable digital challans.
-        </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+st.bar_chart(df["City"].value_counts())
+st.markdown('</div>', unsafe_allow_html=True)
