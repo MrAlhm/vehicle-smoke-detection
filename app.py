@@ -94,6 +94,9 @@ uploaded_file = st.file_uploader(
     type=["jpg", "jpeg", "png"]
 )
 
+# ✅ Demo Mode Toggle
+demo_mode = st.checkbox("🎥 Demo Mode: Force Number Plate Detection")
+
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption="Captured Vehicle Frame", use_column_width=True)
@@ -109,9 +112,12 @@ if uploaded_file is not None:
     st.metric("Smoke Severity", severity)
     st.metric("Detection Confidence", f"{confidence}%")
 
+    # 🚨 Enforcement Logic
     if smoke_status == "Excessive Smoke":
         st.error("🚨 Polluting Vehicle Detected")
 
+    # 🚘 Number Plate Detection (Normal or Demo Mode)
+    if smoke_status == "Excessive Smoke" or demo_mode:
         plate_number = detect_number_plate(image_bgr)
         st.subheader("🚘 Vehicle Identification")
         st.info(f"Detected Number Plate: {plate_number}")
