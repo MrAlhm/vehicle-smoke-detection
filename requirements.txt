@@ -1,9 +1,6 @@
-streamlit
+streamlit==1.41.1
+opencv-python-headless==4.9.0.80
 numpy
-opencv-python-headless
 pillow
 easyocr
 fpdf
-plotly
-pandas
-ultralytics
