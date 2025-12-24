@@ -3,36 +3,22 @@ import cv2
 import numpy as np
 from PIL import Image
 from datetime import datetime
-import easyocr
-from ultralytics import YOLO
 import pandas as pd
+import easyocr
+import tempfile
+import matplotlib.pyplot as plt
 
-# --------------------------------
-# Page Config
-# --------------------------------
-st.set_page_config(
-    page_title="Vehicle Smoke Detection System",
-    layout="wide"
-)
+# ================================
+# Initialize OCR (DL Model)
+# ================================
+reader = easyocr.Reader(['en'], gpu=False)
 
-# --------------------------------
-# Load Models (Cached)
-# --------------------------------
-@st.cache_resource
-def load_models():
-    vehicle_model = YOLO("yolov8n.pt")          # vehicle detection
-    plate_model = YOLO("yolov8n.pt")            # reuse for demo (plate via heuristics)
-    reader = easyocr.Reader(['en'], gpu=False)
-    return vehicle_model, plate_model, reader
-
-vehicle_model, plate_model, reader = load_models()
-
-# --------------------------------
+# ================================
 # Smoke Detection
-# --------------------------------
+# ================================
 def detect_smoke(image_bgr):
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-    _, s, v = cv2.split(hsv)
+    h, s, v = cv2.split(hsv)
 
     smoke_mask = (s < 60) & (v > 150)
     smoke_score = np.sum(smoke_mask) / smoke_mask.size
@@ -44,122 +30,159 @@ def detect_smoke(image_bgr):
         severity = "Low"
         status = "Normal Emission"
 
-    confidence = min(int(smoke_score * 200), 100)
+    confidence = int(min(100, smoke_score * 200))
 
-    return smoke_score, severity, confidence, status
+    return smoke_score, status, severity, confidence
 
-# --------------------------------
-# Vehicle Type Detection (YOLO)
-# --------------------------------
-def detect_vehicle_type(image_bgr):
-    results = vehicle_model(image_bgr, conf=0.4)
+# ================================
+# Number Plate Detection (Demo)
+# ================================
+def detect_number_plate(image_bgr):
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
 
-    for r in results:
-        if r.boxes is not None:
-            for box in r.boxes:
-                cls_id = int(box.cls[0])
-                cls_name = vehicle_model.names[cls_id]
+    contours, _ = cv2.findContours(
+        edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+    )
 
-                if cls_name in ["car", "truck", "bus", "motorcycle"]:
-                    return cls_name.capitalize(), box.xyxy[0]
+    plate_img = None
 
-    return "Unknown", None
+    for cnt in contours:
+        approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
+        if len(approx) == 4:
+            x, y, w, h = cv2.boundingRect(approx)
+            plate_img = image_bgr[y:y+h, x:x+w]
+            break
 
-# --------------------------------
-# Number Plate Detection + OCR
-# --------------------------------
-def detect_number_plate(image_bgr, bbox):
-    if bbox is None:
-        return "Not Readable", None
-
-    x1, y1, x2, y2 = map(int, bbox)
-    plate_img = image_bgr[y1:y2, x1:x2]
-
-    if plate_img.size == 0:
+    if plate_img is None:
         return "Not Readable", None
 
     result = reader.readtext(plate_img)
-
     if len(result) == 0:
         return "Not Readable", plate_img
 
     return result[0][1], plate_img
 
-# --------------------------------
-# Violation History (Session)
-# --------------------------------
-if "history" not in st.session_state:
-    st.session_state.history = []
+# ================================
+# Streamlit UI
+# ================================
+st.set_page_config(page_title="Vehicle Smoke Detection System", layout="centered")
 
-# --------------------------------
-# UI
-# --------------------------------
 st.title("🚗 Vehicle Smoke Detection System")
-st.write("AI-powered real-time vehicular pollution monitoring using computer vision")
+st.write("AI-based real-time smoke monitoring using CCTV simulation.")
 
-uploaded_file = st.file_uploader(
-    "📤 Upload Vehicle Image (CCTV Frame Simulation)",
-    type=["jpg", "jpeg", "png"]
+camera_id = st.selectbox(
+    "📍 Camera Location",
+    ["Cam-Delhi-01", "Cam-Delhi-02", "Cam-Delhi-03"]
 )
 
-if uploaded_file:
+uploaded_file = st.file_uploader(
+    "📤 Upload Vehicle Image or Video",
+    type=["jpg", "jpeg", "png", "mp4", "avi", "mov"]
+)
+
+# ================================
+# Session Storage
+# ================================
+if "violations" not in st.session_state:
+    st.session_state.violations = []
+
+# ================================
+# IMAGE MODE
+# ================================
+if uploaded_file and uploaded_file.type.startswith("image"):
     image = Image.open(uploaded_file)
+    st.image(image, caption="Captured Frame", use_column_width=True)
+
     image_np = np.array(image)
     image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
-    st.image(image, caption="Captured Vehicle Frame", use_column_width=True)
-
-    # ---- Detection Pipeline ----
-    smoke_score, severity, confidence, smoke_status = detect_smoke(image_bgr)
-    vehicle_type, bbox = detect_vehicle_type(image_bgr)
-    plate_number, plate_crop = detect_number_plate(image_bgr, bbox)
-
-    # ---- Draw Bounding Box ----
-    if bbox is not None:
-        x1, y1, x2, y2 = map(int, bbox)
-        cv2.rectangle(image_bgr, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    smoke_score, status, severity, confidence = detect_smoke(image_bgr)
 
     st.subheader("📊 Detection Result")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Smoke Score", f"{smoke_score:.2f}")
-    col2.metric("Smoke Severity", severity)
-    col3.metric("Detection Confidence", f"{confidence}%")
+    st.metric("Smoke Score", f"{smoke_score:.2f}")
+    st.metric("Severity", severity)
+    st.metric("Confidence", f"{confidence}%")
 
-    if smoke_status == "Excessive Smoke":
+    if status == "Excessive Smoke":
         st.error("🚨 Polluting Vehicle Detected")
+
+        plate, plate_img = detect_number_plate(image_bgr)
+
+        if plate_img is not None:
+            st.image(plate_img, caption="Cropped Plate Region", width=300)
+
+        st.info(f"Detected Number Plate: {plate}")
+
+        st.session_state.violations.append({
+            "Plate": plate,
+            "Camera": camera_id,
+            "Severity": severity,
+            "Time": datetime.now()
+        })
     else:
         st.success("✅ Emission Within Permissible Limit")
 
-    st.subheader("🚘 Vehicle Identification")
-    st.info(f"Detected Number Plate: {plate_number}")
-    st.info(f"Vehicle Type: {vehicle_type}")
+# ================================
+# VIDEO MODE (FIRST 20 FRAMES)
+# ================================
+elif uploaded_file and uploaded_file.type.startswith("video"):
+    tfile = tempfile.NamedTemporaryFile(delete=False)
+    tfile.write(uploaded_file.read())
+    cap = cv2.VideoCapture(tfile.name)
 
-    if plate_crop is not None:
-        st.image(plate_crop, caption="Cropped Plate Region", width=300)
+    frame_count = 0
 
-    # ---- e-Challan ----
-    if smoke_status == "Excessive Smoke":
-        st.subheader("🧾 Auto-Generated e-Challan")
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.subheader("🎥 CCTV Frame Processing (First 20 Frames)")
 
-        challan = {
-            "Number Plate": plate_number,
-            "Vehicle Type": vehicle_type,
-            "Smoke Score": round(smoke_score, 2),
-            "Severity": severity,
-            "Date & Time": timestamp
-        }
+    while cap.isOpened() and frame_count < 20:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-        st.json(challan)
+        smoke_score, status, severity, confidence = detect_smoke(frame)
 
-        st.session_state.history.append(challan)
+        if status == "Excessive Smoke":
+            plate, _ = detect_number_plate(frame)
 
-    st.write("🕒 Timestamp:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            st.image(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+                caption=f"Frame {frame_count+1} | Smoke Detected",
+                use_column_width=True
+            )
 
-# --------------------------------
-# Dashboard
-# --------------------------------
-if len(st.session_state.history) > 0:
-    st.subheader("📈 Violation History Dashboard")
-    df = pd.DataFrame(st.session_state.history)
-    st.dataframe(df, use_container_width=True)
+            st.session_state.violations.append({
+                "Plate": plate,
+                "Camera": camera_id,
+                "Severity": severity,
+                "Time": datetime.now()
+            })
+
+        frame_count += 1
+
+    cap.release()
+    st.success("✅ Video analysis completed (20-frame limit)")
+
+# ================================
+# HOTSPOT DASHBOARD
+# ================================
+if len(st.session_state.violations) > 0:
+    st.subheader("📍 Pollution Hotspot Dashboard")
+
+    df = pd.DataFrame(st.session_state.violations)
+
+    st.dataframe(df)
+
+    hotspot = df["Camera"].value_counts()
+
+    fig, ax = plt.subplots()
+    hotspot.plot(kind="bar", ax=ax)
+    ax.set_title("Violations per Camera Location")
+    ax.set_ylabel("Number of Violations")
+
+    st.pyplot(fig)
+
+# ================================
+# FOOTER
+# ================================
+st.write("🕒 Last Updated:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
