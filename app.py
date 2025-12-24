@@ -8,6 +8,7 @@ import easyocr
 import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
+import tempfile
 
 # =====================================================
 # PAGE CONFIG
@@ -18,16 +19,14 @@ st.set_page_config(
 )
 
 # =====================================================
-# GLOBAL STYLE (Professional, Pollution Theme)
+# GLOBAL STYLE
 # =====================================================
 st.markdown("""
 <style>
 html, body { background-color: #0b1220; }
 #MainMenu, footer, header { visibility: hidden; }
 
-.sidebar .sidebar-content {
-    background-color: #0f172a;
-}
+.sidebar .sidebar-content { background-color: #0f172a; }
 
 h1, h2, h3 { color: #e5e7eb; }
 p { color: #9ca3af; }
@@ -72,13 +71,13 @@ if "records" not in st.session_state:
     st.session_state.records = []
 
 # =====================================================
-# SIDEBAR NAVIGATION (FIXED)
+# SIDEBAR NAVIGATION
 # =====================================================
 st.sidebar.title("Emission Monitoring")
 
 st.session_state.page = st.sidebar.radio(
     "Navigation",
-    ["Detection", "Video Tracking", "e-Challan", "Analytics", "Hotspots Map", "About"]
+    ["Detection (Image)", "Video Tracking", "e-Challan", "Analytics", "Hotspots Map", "About"]
 )
 
 camera_location = st.sidebar.selectbox(
@@ -99,12 +98,11 @@ camera_location = st.sidebar.selectbox(
 reader = easyocr.Reader(['en'], gpu=False)
 
 # =====================================================
-# CORE FUNCTIONS
+# FUNCTIONS
 # =====================================================
 def detect_smoke(image):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     _, s, v = cv2.split(hsv)
-
     mask = (s < 60) & (v > 150)
     score = np.sum(mask) / mask.size
 
@@ -135,23 +133,20 @@ def detect_number_plate(image):
     return "Not Readable", None
 
 
-# =====================================================
-# MULTI-VEHICLE DETECTION (CPU SAFE)
-# =====================================================
 def detect_multiple_vehicles(image):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     _, s, v = cv2.split(hsv)
-
     mask = ((s < 60) & (v > 150)).astype("uint8") * 255
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes = []
+
     for c in contours:
-        if cv2.contourArea(c) > 800:
+        if cv2.contourArea(c) > 900:
             x, y, w, h = cv2.boundingRect(c)
             boxes.append((x, y, w, h))
-    return boxes
 
+    return boxes
 
 # =====================================================
 # HERO
@@ -159,22 +154,22 @@ def detect_multiple_vehicles(image):
 st.markdown("""
 <div class='card'>
 <h1>Smart Vehicle Emission Monitoring</h1>
-<p>AI-based detection of excessive vehicular smoke using image & video feeds.</p>
+<p>AI-based detection of excessive vehicular smoke using image & CCTV video feeds.</p>
 </div>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# PAGE: DETECTION (IMAGE)
+# PAGE: IMAGE DETECTION
 # =====================================================
-if st.session_state.page == "Detection":
+if st.session_state.page == "Detection (Image)":
 
-    uploaded = st.file_uploader(
-        "Upload Vehicle Image / CCTV Frame",
+    image_file = st.file_uploader(
+        "Upload Vehicle Image",
         type=["jpg", "jpeg", "png"]
     )
 
-    if uploaded:
-        image = Image.open(uploaded)
+    if image_file:
+        image = Image.open(image_file)
         st.image(image, use_column_width=True)
 
         img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
@@ -186,21 +181,17 @@ if st.session_state.page == "Detection":
         c2.markdown(f"<div class='metric'><h3>Severity</h3><h1>{level}</h1></div>", unsafe_allow_html=True)
         c3.markdown(f"<div class='metric'><h3>Confidence</h3><h1>{confidence}%</h1></div>", unsafe_allow_html=True)
 
-        # AI Confidence Gauge
         fig = go.Figure(go.Indicator(
             mode="gauge+number",
             value=confidence,
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#22d3ee"}
-            }
+            gauge={"axis": {"range": [0, 100]}}
         ))
         st.plotly_chart(fig, use_container_width=True)
 
         if level != "Low":
             st.markdown("<div class='alert'>Polluting vehicle detected</div>", unsafe_allow_html=True)
-
             plate, plate_img = detect_number_plate(img)
+
             if plate_img is not None:
                 st.image(plate_img, width=300)
 
@@ -216,21 +207,21 @@ if st.session_state.page == "Detection":
             st.markdown("<div class='success'>Emission within permissible limits</div>", unsafe_allow_html=True)
 
 # =====================================================
-# PAGE: VIDEO MULTI-VEHICLE TRACKING
+# PAGE: VIDEO TRACKING
 # =====================================================
 elif st.session_state.page == "Video Tracking":
 
-    video = st.file_uploader(
+    video_file = st.file_uploader(
         "Upload CCTV Video",
-        type=["mp4", "avi", "mov"]
+        type=["mp4", "avi", "mov", "mkv"]
     )
 
-    if video:
-        tfile = "temp_video.mp4"
-        with open(tfile, "wb") as f:
-            f.write(video.read())
+    if video_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
+            temp.write(video_file.read())
+            video_path = temp.name
 
-        cap = cv2.VideoCapture(tfile)
+        cap = cv2.VideoCapture(video_path)
         frame_count = 0
 
         st.info("Processing first 15 frames for multi-vehicle tracking")
@@ -276,17 +267,11 @@ elif st.session_state.page == "e-Challan":
         last = st.session_state.records[-1]
 
         st.markdown("<div class='card'><h2>e-Challan</h2></div>", unsafe_allow_html=True)
-
-        col1, col2 = st.columns([4,1])
-        with col1:
-            st.write("Vehicle Number:", last["Plate"])
-            st.write("Severity:", last["Severity"])
-            st.write("Camera:", last["Camera"])
-            st.write("Time:", last["Time"])
-            st.write("Fine: ₹5000")
-        with col2:
-            if st.button("Download PDF"):
-                st.success("PDF download enabled (integration ready)")
+        st.write("Vehicle Number:", last["Plate"])
+        st.write("Severity:", last["Severity"])
+        st.write("Camera:", last["Camera"])
+        st.write("Time:", last["Time"])
+        st.write("Fine: ₹5000")
 
 # =====================================================
 # PAGE: ANALYTICS
