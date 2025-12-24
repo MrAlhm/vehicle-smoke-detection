@@ -1,43 +1,19 @@
-import easyocr
 import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
 from datetime import datetime
+import easyocr
 
-# -------------------------------
-# Smoke Detection Logic
-# -------------------------------
+# --------------------------------
+# Initialize OCR Reader (DL Model)
+# --------------------------------
 reader = easyocr.Reader(['en'], gpu=False)
+
+# --------------------------------
+# Smoke Detection Function
+# --------------------------------
 def detect_smoke(image_bgr):
-    def detect_number_plate(image_bgr):
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    gray = cv2.bilateralFilter(gray, 11, 17, 17)
-
-    edged = cv2.Canny(gray, 30, 200)
-    contours, _ = cv2.findContours(
-        edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
-    plate_img = None
-
-    for cnt in contours:
-        approx = cv2.approxPolyDP(cnt, 0.018 * cv2.arcLength(cnt, True), True)
-        if len(approx) == 4:
-            x, y, w, h = cv2.boundingRect(approx)
-            plate_img = image_bgr[y:y+h, x:x+w]
-            break
-
-    if plate_img is None:
-        return "Not Readable"
-
-    result = reader.readtext(plate_img)
-    if len(result) == 0:
-        return "Not Readable"
-
-    return result[0][1]
-
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
 
@@ -51,10 +27,46 @@ def detect_smoke(image_bgr):
 
     return smoke_score, status
 
-# -------------------------------
+# --------------------------------
+# Number Plate Detection Function
+# --------------------------------
+def detect_number_plate(image_bgr):
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 100, 200)
+
+    contours, _ = cv2.findContours(
+        edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    plate_img = None
+
+    for cnt in contours:
+        approx = cv2.approxPolyDP(
+            cnt, 0.018 * cv2.arcLength(cnt, True), True
+        )
+        if len(approx) == 4:
+            x, y, w, h = cv2.boundingRect(approx)
+            plate_img = image_bgr[y:y+h, x:x+w]
+            break
+
+    if plate_img is None:
+        return "Not Readable"
+
+    result = reader.readtext(plate_img)
+
+    if len(result) == 0:
+        return "Not Readable"
+
+    return result[0][1]
+
+# --------------------------------
 # Streamlit UI
-# -------------------------------
-st.set_page_config(page_title="Vehicle Smoke Detection System", layout="centered")
+# --------------------------------
+st.set_page_config(
+    page_title="Vehicle Smoke Detection System",
+    layout="centered"
+)
 
 st.title("🚗 Vehicle Smoke Detection System")
 st.write(
@@ -79,15 +91,17 @@ if uploaded_file is not None:
     st.metric("Smoke Score", f"{smoke_score:.2f}")
     st.metric("Smoke Status", smoke_status)
 
-   if smoke_status == "Excessive Smoke":
-    st.error("🚨 Polluting Vehicle Detected")
+    if smoke_status == "Excessive Smoke":
+        st.error("🚨 Polluting Vehicle Detected")
 
-    plate_number = detect_number_plate(image_bgr)
+        plate_number = detect_number_plate(image_bgr)
+        st.subheader("🚘 Vehicle Identification")
+        st.info(f"Detected Number Plate: {plate_number}")
+    else:
+        st.success("✅ Emission Within Permissible Limit")
 
-    st.subheader("🚘 Vehicle Identification")
-    st.info(f"Detected Number Plate: {plate_number}")
-else:
-    st.success("✅ Emission Within Permissible Limit")
+    st.write(
+        "🕒 Timestamp:",
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
 
-
-    st.write("🕒 Timestamp:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
